@@ -651,6 +651,9 @@
 
             const connectScale = async (knownDevice = null, silent = false) => {
                 try {
+                    if (!navigator.bluetooth) {
+                        throw new Error('Web Bluetooth is unavailable. Open Track&Tag in Chrome or Edge from localhost or HTTPS.');
+                    }
                     const device = knownDevice || await navigator.bluetooth.requestDevice({
                         filters: [{ services: [SCALE_SERVICE] }]
                     });
@@ -671,13 +674,13 @@
                         device.addEventListener('gattserverdisconnected', device.trackTagScaleDisconnectHandler);
                     }
 
-                    if (device.gatt.connected) return;
-                    const server = await device.gatt.connect();
+                    const server = device.gatt.connected ? device.gatt : await device.gatt.connect();
                     const service = await server.getPrimaryService(SCALE_SERVICE);
                     const characteristic = await service.getCharacteristic(SCALE_CHAR);
 
                     await characteristic.startNotifications();
                     scaleCharacteristicRef.current = characteristic;
+                    clearInterval(scaleKeepAliveRef.current);
                     scaleKeepAliveRef.current = setInterval(async () => {
                         try {
                             await scaleCharacteristicRef.current?.readValue();
@@ -685,7 +688,7 @@
                             console.debug('Scale keep-alive unavailable', err);
                         }
                     }, 10000);
-                    characteristic.addEventListener('characteristicvaluechanged', (e) => {
+                    const handleScaleValueChanged = (e) => {
                         const value = e.target.value;
                         const flags = value.getUint8(0);
                         const unitIsLbs = (flags & 0x01) !== 0;
@@ -699,7 +702,12 @@
                         else w = rawWeight / 200;
 
                         setLiveWeight(w);
-                    });
+                    };
+                    if (characteristic.trackTagScaleValueHandler) {
+                        characteristic.removeEventListener('characteristicvaluechanged', characteristic.trackTagScaleValueHandler);
+                    }
+                    characteristic.trackTagScaleValueHandler = handleScaleValueChanged;
+                    characteristic.addEventListener('characteristicvaluechanged', handleScaleValueChanged);
 
                     scaleDeviceRef.current = device;
                     device.trackTagScaleReconnectAttempts = 0;
@@ -709,7 +717,10 @@
                     console.error(err);
                     setScaleConnected(false);
                     if (knownDevice && !scaleManualDisconnectRef.current) scheduleScaleReconnect(knownDevice);
-                    if (!silent) message.error('Scale connection failed');
+                    if (!silent) {
+                        const detail = err?.message || err?.name || 'Unknown Bluetooth error';
+                        message.error(`Scale connection failed: ${detail}`);
+                    }
                 }
             };
 
