@@ -677,6 +677,9 @@
                     const device = knownDevice || await navigator.bluetooth.requestDevice({
                         filters: [{ services: [SCALE_SERVICE] }]
                     });
+                    if (!device?.gatt || typeof device.gatt.connect !== 'function') {
+                        throw new Error('The selected Bluetooth device does not provide a GATT connection.');
+                    }
 
                     scaleManualDisconnectRef.current = false;
                     localStorage.setItem('trackTagScaleDeviceId', device.id);
@@ -699,7 +702,8 @@
                         );
                     }
 
-                    const server = device.gatt.connected ? device.gatt : await device.gatt.connect();
+                    const gatt = device.gatt;
+                    const server = gatt.connected ? gatt : await gatt.connect();
                     const service = await server.getPrimaryService(SCALE_SERVICE);
                     const characteristic = await service.getCharacteristic(SCALE_CHAR);
 
