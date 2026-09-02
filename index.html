@@ -335,6 +335,18 @@
         const SCALE_SERVICE = 0x181d;
         const SCALE_CHAR = 0x2a9d;
 
+        const setBluetoothEventHandler = (target, eventName, handler, propertyName) => {
+            if (typeof target?.addEventListener === 'function') {
+                target.addEventListener(eventName, handler);
+                return;
+            }
+            if (target) {
+                target[propertyName] = handler;
+                return;
+            }
+            throw new Error(`Bluetooth object does not support ${eventName} events`);
+        };
+
         // --- Bluetooth Printer Logic ---
         const PRINTER_SERVICE = '0000ff00-0000-1000-8000-00805f9b34fb';
         const PRINTER_CHAR = '0000ff02-0000-1000-8000-00805f9b34fb';
@@ -679,7 +691,12 @@
                             if (!scaleManualDisconnectRef.current) scheduleScaleReconnect(device);
                             if (!scaleManualDisconnectRef.current) message.warning('Scale disconnected; reconnecting...');
                         };
-                        device.addEventListener('gattserverdisconnected', device.trackTagScaleDisconnectHandler);
+                        setBluetoothEventHandler(
+                            device,
+                            'gattserverdisconnected',
+                            device.trackTagScaleDisconnectHandler,
+                            'ongattserverdisconnected'
+                        );
                     }
 
                     const server = device.gatt.connected ? device.gatt : await device.gatt.connect();
@@ -776,7 +793,12 @@
                             if (!printerManualDisconnectRef.current) schedulePrinterReconnect(device);
                             if (!printerManualDisconnectRef.current) message.warning('Printer disconnected; reconnecting...');
                         };
-                        device.addEventListener('gattserverdisconnected', device.trackTagPrinterDisconnectHandler);
+                        setBluetoothEventHandler(
+                            device,
+                            'gattserverdisconnected',
+                            device.trackTagPrinterDisconnectHandler,
+                            'ongattserverdisconnected'
+                        );
                     }
 
                     if (device.gatt.connected) return;
