@@ -43,6 +43,9 @@
     <!-- JsBarcode -->
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 
+    <!-- QR and DataMatrix rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/bwip-js@4.5.1/dist/bwip-js-min.js"></script>
+
     <!-- HTML5 QRCode -->
     <script src="https://unpkg.com/html5-qrcode"></script>
 
@@ -304,10 +307,11 @@
             locationRegex: '^LOC.*$',
             itemRegex: '^ITEM.*$',
             template: [
-            { "type": "text", "content": "L: {location}", "x": 10, "y": 180, "size":15, "rot": 90},
-            { "type": "text", "content": "{item}", "x": 35, "y": 130, "size":15, "rot": 90 },
-            { "type": "text", "content": "{weight}kg", "x": 10, "y": 50, "size":15, "rot": 90 },
-            { "type": "barcode", "content": "{item}", "x": 70, "y": 120, "height": 40, "width": 1.5, "rot": 90, "showText": false }]
+                { "type": "text", "content": "{location}", "x": 15, "y": 200, "size": 12, "rot": 90 },
+                { "type": "text", "content": "{item}", "x": 15, "y": 120, "size": 15, "rot": 90 },
+                { "type": "text", "content": "{weight}kg", "x": 70, "y": 180, "size": 25, "rot": 90 },
+                { "type": "datamatrix", "content": "{item}", "x": 45, "y": 45, "scale": 2, "rot": 90, "showText": false }
+            ]
         };
 
         // --- Bluetooth Scale Logic ---
@@ -552,7 +556,14 @@
 
                         const startPromise = html5QrCode.start(
                             selectedCamera ? selectedCamera : { facingMode: "environment" },
-                            { fps: 10, aspectRatio: 1.0 },
+                            {
+                                fps: 10,
+                                aspectRatio: 1.0,
+                                formatsToSupport: [
+                                    Html5QrcodeSupportedFormats.QR_CODE,
+                                    Html5QrcodeSupportedFormats.DATA_MATRIX
+                                ]
+                            },
                             onScanSuccess,
                             onScanFailure
                         );
@@ -785,16 +796,26 @@
                         ctx.font = `bold ${t.size || 24}px sans-serif`;
                         ctx.fillText(content, 0, 0);
                         ctx.restore();
-                    } else if (t.type === 'barcode' && content) {
+                    } else if ((t.type === 'barcode' || t.type === 'qrcode' || t.type === 'datamatrix') && content) {
                         const bcCanvas = document.getElementById('barcodeCanvas');
                         try {
-                            JsBarcode(bcCanvas, content, {
-                                format: t.format || "CODE128",
-                                displayValue: t.showText,
-                                margin: 0,
-                                height: t.height || 40,
-                                width: t.width || 2
-                            });
+                            if (t.type === 'qrcode' || t.type === 'datamatrix') {
+                                bwipjs.toCanvas(bcCanvas, {
+                                    bcid: t.type === 'qrcode' ? 'qrcode' : 'datamatrix',
+                                    text: content,
+                                    scale: t.scale || 3,
+                                    padding: t.padding ?? 0,
+                                    includetext: false
+                                });
+                            } else {
+                                JsBarcode(bcCanvas, content, {
+                                    format: t.format || "CODE128",
+                                    displayValue: t.showText,
+                                    margin: 0,
+                                    height: t.height || 40,
+                                    width: t.width || 2
+                                });
+                            }
                             ctx.save();
                             ctx.translate(t.x, t.y);
                             ctx.rotate((t.rot || 0) * Math.PI / 180);
@@ -1317,7 +1338,7 @@
                                                 width: 420,
                                                 content: (
                                                     <div style={{ lineHeight: 1.45 }}>
-                                                        <p>Build the label from JSON elements: <code>text</code> and <code>barcode</code>.</p>
+                                                        <p>Build the label from JSON elements: <code>text</code>, <code>barcode</code>, <code>qrcode</code>, and <code>datamatrix</code>.</p>
                                                         <div style={{ display: 'flex', gap: 16, alignItems: 'center', margin: '16px 0' }}>
                                                             <div style={{ width: 96, height: 160, border: '2px solid #1677ff', background: '#f0f7ff', position: 'relative', flexShrink: 0 }}>
                                                                 <span style={{ position: 'absolute', top: 4, left: 4, fontSize: 11 }}>0,0</span>
@@ -1335,11 +1356,12 @@
                                                                 <tr><td><code>rot</code></td><td>Clockwise rotation; <code>90</code> is the default portrait layout.</td></tr>
                                                                 <tr><td><code>size</code></td><td>Text font size in pixels.</td></tr>
                                                                 <tr><td><code>height</code> / <code>width</code></td><td>Barcode height and bar-module width in pixels.</td></tr>
+                                                                <tr><td><code>scale</code> / <code>padding</code></td><td>QR/DataMatrix module size and quiet-zone padding.</td></tr>
                                                                 <tr><td><code>showText</code></td><td>Displays the value below the barcode.</td></tr>
                                                             </tbody>
                                                         </table>
                                                         <p><strong>Values:</strong> <code>{'{location}'}</code> <code>{'{item}'}</code> <code>{'{weight}'}</code>. Weight follows Decimal Places.</p>
-                                                        <p><strong>Formats:</strong> <code>CODE128</code> (recommended), <code>CODE128A/B/C</code>, <code>EAN13/8/5/2</code>, <code>UPC</code>, <code>ITF14</code>, <code>ITF</code>, <code>MSI</code> variants, <code>pharmacode</code>, <code>codabar</code>.</p>
+                                                        <p><strong>Formats:</strong> <code>barcode</code> supports <code>CODE128</code> (recommended), <code>CODE128A/B/C</code>, <code>EAN13/8/5/2</code>, <code>UPC</code>, <code>ITF14</code>, <code>ITF</code>, <code>MSI</code> variants, <code>pharmacode</code>, and <code>codabar</code>. Use <code>qrcode</code> or <code>datamatrix</code> as the element type for 2D codes.</p>
                                                         <p style={{ marginBottom: 0 }}>Use numeric input for EAN, UPC, ITF14, and Pharmacode. Leave room around rotated or large elements to prevent clipping.</p>
                                                     </div>
                                                 )
@@ -1421,7 +1443,7 @@
 
                     {/* Camera Scanner Modal */}
                     <Modal
-                        title={<span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><CameraOutlined /> Scan QR Code</span>}
+                        title={<span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><CameraOutlined /> Scan QR or DataMatrix</span>}
                         visible={scannerVisible}
                         onCancel={() => { setScannerVisible(false); setScannerTarget(null); }}
                         footer={
