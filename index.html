@@ -392,6 +392,8 @@
             const [printerConnected, setPrinterConnected] = useState(false);
 
             const scaleDeviceRef = useRef(null);
+            const scaleCharacteristicRef = useRef(null);
+            const scaleKeepAliveRef = useRef(null);
             const printerDeviceRef = useRef(null);
             const printerCharRef = useRef(null);
 
@@ -589,6 +591,9 @@
                     });
 
                     device.addEventListener('gattserverdisconnected', () => {
+                        clearInterval(scaleKeepAliveRef.current);
+                        scaleKeepAliveRef.current = null;
+                        scaleCharacteristicRef.current = null;
                         setScaleConnected(false);
                         scaleDeviceRef.current = null;
                         message.warning('Scale disconnected');
@@ -599,6 +604,14 @@
                     const characteristic = await service.getCharacteristic(SCALE_CHAR);
 
                     await characteristic.startNotifications();
+                    scaleCharacteristicRef.current = characteristic;
+                    scaleKeepAliveRef.current = setInterval(async () => {
+                        try {
+                            await scaleCharacteristicRef.current?.readValue();
+                        } catch (err) {
+                            console.debug('Scale keep-alive unavailable', err);
+                        }
+                    }, 10000);
                     characteristic.addEventListener('characteristicvaluechanged', (e) => {
                         const value = e.target.value;
                         const flags = value.getUint8(0);
@@ -625,6 +638,9 @@
             };
 
             const disconnectScale = () => {
+                clearInterval(scaleKeepAliveRef.current);
+                scaleKeepAliveRef.current = null;
+                scaleCharacteristicRef.current = null;
                 if (scaleDeviceRef.current && scaleDeviceRef.current.gatt.connected) {
                     scaleDeviceRef.current.gatt.disconnect();
                 }
@@ -961,7 +977,7 @@
                         <Row gutter={[16, 16]}>
                             <Col xs={24} sm={12}>
                                 <Card
-                                    title={<span><ScanOutlined style={{ marginRight: 8 }} />Scanned Data</span>}
+                                    title={<span><ScanOutlined style={{ marginRight: 8 }} />Scanns</span>}
                                     bordered={false}
                                     style={{ background: 'var(--panel-bg)', height: '100%' }}
                                     extra={<Button type="text" icon={<CameraOutlined />} onClick={() => { setScannerTarget(null); setScannerVisible(true); }} />}
@@ -978,7 +994,7 @@
                             </Col>
                             <Col xs={24} sm={12}>
                                 <Card
-                                    title={<span><DashboardOutlined style={{ marginRight: 8 }} />Weighing</span>}
+                                    title={<span><DashboardOutlined style={{ marginRight: 8 }} />Weigt</span>}
                                     extra={
                                         <span
                                             className={`status-badge ${scaleConnected ? 'status-connected' : 'status-disconnected'}`}
