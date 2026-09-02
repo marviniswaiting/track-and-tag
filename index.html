@@ -1086,7 +1086,7 @@
                         placement="right"
                         onClose={() => setDrawerVisible(false)}
                         visible={drawerVisible}
-                        width={400}
+                        width="min(400px, 100vw)"
                         bodyStyle={{ padding: 0 }}
                         destroyOnClose
                         extra={<Button icon={<ShareAltOutlined />} onClick={handleShare}>Share Records</Button>}
@@ -1153,7 +1153,7 @@
                         placement="right"
                         onClose={() => setSettingsVisible(false)}
                         visible={settingsVisible}
-                        width={400}
+                        width="min(400px, 100vw)"
                         destroyOnClose
                         extra={
                             <Space>
