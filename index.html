@@ -314,6 +314,23 @@
             ]
         };
 
+        const readStoredJson = (key, fallback) => {
+            try {
+                const value = localStorage.getItem(key);
+                return value ? JSON.parse(value) : fallback;
+            } catch (error) {
+                console.warn(`Ignoring invalid stored ${key} data`, error);
+                return fallback;
+            }
+        };
+
+        const formatWeight = (value, decimalPlaces) => {
+            const weight = Number(value);
+            return Number.isFinite(weight) ? weight.toFixed(decimalPlaces ?? 3) : '--';
+        };
+
+        const csvField = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+
         // --- Bluetooth Scale Logic ---
         const SCALE_SERVICE = 0x181d;
         const SCALE_CHAR = 0x2a9d;
@@ -404,9 +421,22 @@
             const printerReconnectRef = useRef(null);
             const printerManualDisconnectRef = useRef(false);
 
-            const [records, setRecords] = useState(() => JSON.parse(localStorage.getItem('records') || '[]'));
-            const [printHistory, setPrintHistory] = useState(() => JSON.parse(localStorage.getItem('printHistory') || '[]'));
-            const [settings, setSettings] = useState(() => JSON.parse(localStorage.getItem('settings') || JSON.stringify(DEFAULT_SETTINGS)));
+            const [records, setRecords] = useState(() => {
+                const stored = readStoredJson('records', []);
+                return Array.isArray(stored) ? stored : [];
+            });
+            const [printHistory, setPrintHistory] = useState(() => {
+                const stored = readStoredJson('printHistory', []);
+                return Array.isArray(stored) ? stored : [];
+            });
+            const [settings, setSettings] = useState(() => {
+                const stored = readStoredJson('settings', {});
+                return {
+                    ...DEFAULT_SETTINGS,
+                    ...(stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}),
+                    template: Array.isArray(stored?.template) ? stored.template : DEFAULT_SETTINGS.template
+                };
+            });
 
             const [drawerVisible, setDrawerVisible] = useState(false);
             const [settingsVisible, setSettingsVisible] = useState(false);
@@ -502,10 +532,19 @@
                 if (!current) return;
                 const { location, item, isLocked, settings } = current;
 
-                const locReg = new RegExp(settings.locationRegex);
-                const itemReg = new RegExp(settings.itemRegex);
-                const printReg = new RegExp(settings.printCommandRegex || '^CMD-PRINT$');
-                const saveReg = new RegExp(settings.saveCommandRegex || '^CMD-SAVE$');
+                let locReg;
+                let itemReg;
+                let printReg;
+                let saveReg;
+                try {
+                    locReg = new RegExp(settings.locationRegex);
+                    itemReg = new RegExp(settings.itemRegex);
+                    printReg = new RegExp(settings.printCommandRegex || DEFAULT_SETTINGS.printCommandRegex);
+                    saveReg = new RegExp(settings.saveCommandRegex || DEFAULT_SETTINGS.saveCommandRegex);
+                } catch (error) {
+                    message.error('Invalid scan regular expression in Settings.');
+                    return;
+                }
 
                 if (printReg.test(scannedValue)) {
                     const btn = document.getElementById('print-action-btn');
@@ -829,7 +868,7 @@
 
             useEffect(() => {
                 if (!settingsVisible || !previewCanvasRef.current || !Array.isArray(settings.template)) return;
-                renderCanvas('LOC-01', 'ITEM-123', (1.25).toFixed(settings.decimalPlaces ?? 3), previewCanvasRef.current);
+                renderCanvas('LOC-01', 'ITEM-123', formatWeight(1.25, settings.decimalPlaces), previewCanvasRef.current);
             }, [settings, settingsVisible]);
 
             const getRasterCommand = (canvas, ctx) => {
@@ -866,7 +905,7 @@
                 const printItm = isReprint ? entryToPrint.item : item;
                 const printWt = isReprint ? entryToPrint.weight : lockedWeight;
 
-                if (!isReprint && (!printLoc || !printItm || !isLocked)) {
+                if (!printLoc || !printItm || (!isReprint && !isLocked) || !Number.isFinite(Number(printWt))) {
                     return message.error('Missing location, item, or locked weight.');
                 }
                 if (!printerConnected) {
@@ -876,7 +915,7 @@
 
                 try {
                     message.loading({ content: 'Printing...', key: 'print' });
-                    const { canvas, ctx } = renderCanvas(printLoc, printItm, printWt.toFixed(settings.decimalPlaces ?? 3));
+                    const { canvas, ctx } = renderCanvas(printLoc, printItm, formatWeight(printWt, settings.decimalPlaces));
                     const rasterCmd = getRasterCommand(canvas, ctx);
 
                     const writeCmd = async (cmd, waitMs = 50) => {
@@ -916,7 +955,7 @@
             };
 
             const handleSave = () => {
-                if (!location || !item || !isLocked) {
+                if (!location || !item || !isLocked || !Number.isFinite(Number(lockedWeight))) {
                     return message.error('Missing location, item, or locked weight.');
                 }
 
@@ -946,7 +985,7 @@
                             createNewRecord();
                         }
                     });
-                } else {
+                } else if (Number.isFinite(Number(liveWeight))) {
                     createNewRecord();
                 }
             };
@@ -993,13 +1032,13 @@
                 if (records.length === 0) return message.warning('No records to share.');
 
                 const csvHeader = 'Timestamp,Location,Item ID,Weight\n';
-                const csvRows = records.map(r => `${r.timestamp},${r.location},${r.item},${r.weight}`).join('\n');
+                const csvRows = records.map(r => [r.timestamp, r.location, r.item, r.weight].map(csvField).join(',')).join('\n');
                 const csvContent = csvHeader + csvRows;
 
                 const blob = new Blob([csvContent], { type: 'text/csv' });
                 const file = new File([blob], 'records.csv', { type: 'text/csv' });
 
-                if (navigator.share && navigator.canShare({ files: [file] })) {
+                if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
                     try {
                         await navigator.share({
                             files: [file],
@@ -1031,6 +1070,7 @@
                         reader.onload = (ev) => {
                             try {
                                 const newSettings = JSON.parse(ev.target.result);
+                                if (!Array.isArray(newSettings.template)) throw new Error('Template must be an array');
                                 setSettings({ ...DEFAULT_SETTINGS, ...newSettings });
                                 message.success('Settings loaded successfully');
                                 setSettingsVisible(false);
@@ -1089,7 +1129,7 @@
                         <Row gutter={[16, 16]}>
                             <Col xs={24} sm={12}>
                                 <Card
-                                    title={<span><ScanOutlined style={{ marginRight: 8 }} />Scanns</span>}
+                                    title={<span><ScanOutlined style={{ marginRight: 8 }} />Scans</span>}
                                     bordered={false}
                                     style={{ background: 'var(--panel-bg)', height: '100%' }}
                                     extra={<Button type="text" icon={<CameraOutlined />} onClick={() => { setScannerTarget(null); setScannerVisible(true); }} />}
@@ -1106,7 +1146,7 @@
                             </Col>
                             <Col xs={24} sm={12}>
                                 <Card
-                                    title={<span><DashboardOutlined style={{ marginRight: 8 }} />Weigt</span>}
+                                    title={<span><DashboardOutlined style={{ marginRight: 8 }} />Weight</span>}
                                     extra={
                                         <span
                                             className={`status-badge ${scaleConnected ? 'status-connected' : 'status-disconnected'}`}
@@ -1122,7 +1162,7 @@
                                     bodyStyle={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', flex: 1 }}
                                 >
                                     <div className={`weight-display ${isLocked ? '' : 'unlocked'}`} style={{ cursor: 'pointer', userSelect: 'none' }} {...weightLongPress}>
-                                        {(isLocked ? lockedWeight : liveWeight).toFixed(settings.decimalPlaces ?? 3)}
+                                        {formatWeight(isLocked ? lockedWeight : liveWeight, settings.decimalPlaces)}
                                         <span className="weight-unit">kg</span>
                                     </div>
                                     <Button
@@ -1170,7 +1210,7 @@
                                                     description={<span style={{ color: 'rgba(255,255,255,0.45)' }}>{new Date(r.timestamp).toLocaleString()}</span>}
                                                 />
                                                 <div style={{ textAlign: 'right', color: 'rgba(255,255,255,0.65)' }}>
-                                                    <div>{r.weight.toFixed(settings.decimalPlaces ?? 3)} kg</div>
+                                                    <div>{formatWeight(r.weight, settings.decimalPlaces)} kg</div>
                                                     <div style={{ fontSize: '0.8em', color: 'rgba(255,255,255,0.45)' }}>{r.location}</div>
                                                 </div>
                                             </List.Item>
@@ -1239,7 +1279,7 @@
                                                 description={new Date(r.timestamp).toLocaleString()}
                                             />
                                             <div style={{ textAlign: 'right' }}>
-                                                <div>{r.weight.toFixed(settings.decimalPlaces ?? 3)} kg</div>
+                                                <div>{formatWeight(r.weight, settings.decimalPlaces)} kg</div>
                                                 <div style={{ fontSize: '0.8em', color: 'gray' }}>{r.location}</div>
                                             </div>
                                         </List.Item>
@@ -1265,7 +1305,7 @@
                                                 description={new Date(r.timestamp).toLocaleString()}
                                             />
                                             <div style={{ textAlign: 'right' }}>
-                                                <div>{r.weight.toFixed(settings.decimalPlaces ?? 3)} kg</div>
+                                                <div>{formatWeight(r.weight, settings.decimalPlaces)} kg</div>
                                                 <div style={{ fontSize: '0.8em', color: 'gray' }}>{r.location}</div>
                                             </div>
                                         </List.Item>
@@ -1385,6 +1425,7 @@
                                     onChange={(e) => {
                                         try {
                                             const p = JSON.parse(e.target.value);
+                                            if (!Array.isArray(p)) throw new Error('Template must be an array');
                                             setSettings(prev => ({ ...prev, template: p }));
                                         } catch (err) { }
                                     }}

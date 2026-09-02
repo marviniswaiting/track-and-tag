@@ -2,7 +2,7 @@
   "name": "Track&Tag",
   "short_name": "Track&Tag",
   "description": "Warehouse tracking and label printing app — scan barcodes, weigh items, and print labels via Bluetooth.",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#0b0f19",
