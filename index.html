@@ -394,8 +394,12 @@
             const scaleDeviceRef = useRef(null);
             const scaleCharacteristicRef = useRef(null);
             const scaleKeepAliveRef = useRef(null);
+            const scaleReconnectRef = useRef(null);
+            const scaleManualDisconnectRef = useRef(false);
             const printerDeviceRef = useRef(null);
             const printerCharRef = useRef(null);
+            const printerReconnectRef = useRef(null);
+            const printerManualDisconnectRef = useRef(false);
 
             const [records, setRecords] = useState(() => JSON.parse(localStorage.getItem('records') || '[]'));
             const [printHistory, setPrintHistory] = useState(() => JSON.parse(localStorage.getItem('printHistory') || '[]'));
@@ -584,21 +588,40 @@
             }, [scannerVisible, selectedCamera]);
 
             // --- Scale Integration ---
-            const connectScale = async () => {
+            const scheduleScaleReconnect = (device) => {
+                if (scaleManualDisconnectRef.current || scaleReconnectRef.current || !device) return;
+                const attempts = device.trackTagScaleReconnectAttempts || 0;
+                if (attempts >= 5) return;
+                device.trackTagScaleReconnectAttempts = attempts + 1;
+                scaleReconnectRef.current = setTimeout(() => {
+                    scaleReconnectRef.current = null;
+                    connectScale(device, true);
+                }, Math.min(30000, 2000 * (attempts + 1)));
+            };
+
+            const connectScale = async (knownDevice = null, silent = false) => {
                 try {
-                    const device = await navigator.bluetooth.requestDevice({
+                    const device = knownDevice || await navigator.bluetooth.requestDevice({
                         filters: [{ services: [SCALE_SERVICE] }]
                     });
 
-                    device.addEventListener('gattserverdisconnected', () => {
-                        clearInterval(scaleKeepAliveRef.current);
-                        scaleKeepAliveRef.current = null;
-                        scaleCharacteristicRef.current = null;
-                        setScaleConnected(false);
-                        scaleDeviceRef.current = null;
-                        message.warning('Scale disconnected');
-                    });
+                    scaleManualDisconnectRef.current = false;
+                    localStorage.setItem('trackTagScaleDeviceId', device.id);
 
+                    if (!device.trackTagScaleDisconnectHandler) {
+                        device.trackTagScaleDisconnectHandler = () => {
+                            clearInterval(scaleKeepAliveRef.current);
+                            scaleKeepAliveRef.current = null;
+                            scaleCharacteristicRef.current = null;
+                            setScaleConnected(false);
+                            if (scaleDeviceRef.current === device) scaleDeviceRef.current = null;
+                            if (!scaleManualDisconnectRef.current) scheduleScaleReconnect(device);
+                            if (!scaleManualDisconnectRef.current) message.warning('Scale disconnected; reconnecting...');
+                        };
+                        device.addEventListener('gattserverdisconnected', device.trackTagScaleDisconnectHandler);
+                    }
+
+                    if (device.gatt.connected) return;
                     const server = await device.gatt.connect();
                     const service = await server.getPrimaryService(SCALE_SERVICE);
                     const characteristic = await service.getCharacteristic(SCALE_CHAR);
@@ -629,51 +652,114 @@
                     });
 
                     scaleDeviceRef.current = device;
+                    device.trackTagScaleReconnectAttempts = 0;
                     setScaleConnected(true);
-                    message.success('Scale connected');
+                    if (!silent) message.success('Scale connected');
                 } catch (err) {
                     console.error(err);
-                    message.error('Scale connection failed');
+                    setScaleConnected(false);
+                    if (knownDevice && !scaleManualDisconnectRef.current) scheduleScaleReconnect(knownDevice);
+                    if (!silent) message.error('Scale connection failed');
                 }
             };
 
             const disconnectScale = () => {
+                scaleManualDisconnectRef.current = true;
+                clearTimeout(scaleReconnectRef.current);
+                scaleReconnectRef.current = null;
                 clearInterval(scaleKeepAliveRef.current);
                 scaleKeepAliveRef.current = null;
                 scaleCharacteristicRef.current = null;
                 if (scaleDeviceRef.current && scaleDeviceRef.current.gatt.connected) {
                     scaleDeviceRef.current.gatt.disconnect();
                 }
+                scaleDeviceRef.current = null;
+                setScaleConnected(false);
             };
 
             // --- Printer Integration ---
-            const connectPrinter = async () => {
+            const schedulePrinterReconnect = (device) => {
+                if (printerManualDisconnectRef.current || printerReconnectRef.current || !device) return;
+                const attempts = device.trackTagPrinterReconnectAttempts || 0;
+                if (attempts >= 5) return;
+                device.trackTagPrinterReconnectAttempts = attempts + 1;
+                printerReconnectRef.current = setTimeout(() => {
+                    printerReconnectRef.current = null;
+                    connectPrinter(device, true);
+                }, Math.min(30000, 2000 * (attempts + 1)));
+            };
+
+            const connectPrinter = async (knownDevice = null, silent = false) => {
                 try {
-                    const device = await navigator.bluetooth.requestDevice({
+                    const device = knownDevice || await navigator.bluetooth.requestDevice({
                         acceptAllDevices: true,
                         optionalServices: [PRINTER_SERVICE]
                     });
 
-                    device.addEventListener('gattserverdisconnected', () => {
-                        setPrinterConnected(false);
-                        printerDeviceRef.current = null;
-                        printerCharRef.current = null;
-                        message.warning('Printer disconnected');
-                    });
+                    printerManualDisconnectRef.current = false;
+                    localStorage.setItem('trackTagPrinterDeviceId', device.id);
 
+                    if (!device.trackTagPrinterDisconnectHandler) {
+                        device.trackTagPrinterDisconnectHandler = () => {
+                            setPrinterConnected(false);
+                            printerCharRef.current = null;
+                            if (printerDeviceRef.current === device) printerDeviceRef.current = null;
+                            if (!printerManualDisconnectRef.current) schedulePrinterReconnect(device);
+                            if (!printerManualDisconnectRef.current) message.warning('Printer disconnected; reconnecting...');
+                        };
+                        device.addEventListener('gattserverdisconnected', device.trackTagPrinterDisconnectHandler);
+                    }
+
+                    if (device.gatt.connected) return;
                     const server = await device.gatt.connect();
                     const service = await server.getPrimaryService(PRINTER_SERVICE);
                     const char = await service.getCharacteristic(PRINTER_CHAR);
 
                     printerDeviceRef.current = device;
                     printerCharRef.current = char;
+                    device.trackTagPrinterReconnectAttempts = 0;
                     setPrinterConnected(true);
-                    message.success('Printer connected');
+                    if (!silent) message.success('Printer connected');
                 } catch (err) {
                     console.error(err);
-                    message.error('Printer connection failed');
+                    setPrinterConnected(false);
+                    if (knownDevice && !printerManualDisconnectRef.current) schedulePrinterReconnect(knownDevice);
+                    if (!silent) message.error('Printer connection failed');
                 }
             };
+
+            const disconnectPrinter = () => {
+                printerManualDisconnectRef.current = true;
+                clearTimeout(printerReconnectRef.current);
+                printerReconnectRef.current = null;
+                if (printerDeviceRef.current && printerDeviceRef.current.gatt.connected) {
+                    printerDeviceRef.current.gatt.disconnect();
+                }
+                printerDeviceRef.current = null;
+                printerCharRef.current = null;
+                setPrinterConnected(false);
+            };
+
+            useEffect(() => {
+                let cancelled = false;
+                const reconnectRememberedDevices = async () => {
+                    if (!navigator.bluetooth?.getDevices) return;
+                    try {
+                        const devices = await navigator.bluetooth.getDevices();
+                        if (cancelled) return;
+                        const scaleId = localStorage.getItem('trackTagScaleDeviceId');
+                        const printerId = localStorage.getItem('trackTagPrinterDeviceId');
+                        const scale = devices.find(device => device.id === scaleId);
+                        const printer = devices.find(device => device.id === printerId);
+                        if (scale) connectScale(scale, true);
+                        if (printer) connectPrinter(printer, true);
+                    } catch (err) {
+                        console.debug('Bluetooth auto-connect unavailable', err);
+                    }
+                };
+                reconnectRememberedDevices();
+                return () => { cancelled = true; };
+            }, []);
 
             const delay = ms => new Promise(res => setTimeout(res, ms));
 
