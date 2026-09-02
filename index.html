@@ -294,21 +294,20 @@
         const { useState, useEffect, useRef, useCallback } = React;
         const { Card, Button, Row, Col, Typography, message, Modal, Drawer, Table, Tabs, Form, Input, InputNumber, Space, Popconfirm, List, Select } = antd;
         const { Title, Text } = Typography;
-        const { SettingOutlined, HistoryOutlined, PrinterOutlined, SaveOutlined, ShareAltOutlined, PlusOutlined, BulbOutlined, ApiOutlined, DisconnectOutlined, UploadOutlined, DownloadOutlined, DeleteOutlined, ScanOutlined, DashboardOutlined, CameraOutlined } = icons;
+        const { SettingOutlined, HistoryOutlined, PrinterOutlined, SaveOutlined, ShareAltOutlined, PlusOutlined, BulbOutlined, ApiOutlined, DisconnectOutlined, UploadOutlined, DownloadOutlined, DeleteOutlined, ScanOutlined, DashboardOutlined, CameraOutlined, InfoCircleOutlined } = icons;
 
         // --- Defaults ---
         const DEFAULT_SETTINGS = {
             decimalPlaces: 3,
-            printCommandRegex: '^CMD-PRINT$',
-            saveCommandRegex: '^CMD-SAVE$',
-            locationRegex: '^LOC-.*$',
-            itemRegex: '^ITEM-.*$',
+            printCommandRegex: '^CMD_PRINT$',
+            saveCommandRegex: '^CMD_SAVE$',
+            locationRegex: '^LOC.*$',
+            itemRegex: '^ITEM.*$',
             template: [
-                { type: 'text', content: 'LOC: {location}', x: 48, y: 20, size: 24, rot: 90 },
-                { type: 'text', content: 'ID: {item}', x: 48, y: 70, size: 20, rot: 90 },
-                { type: 'text', content: '{weight}kg', x: 48, y: 120, size: 30, rot: 90 },
-                { type: 'barcode', content: '{item}', x: 48, y: 200, height: 40, width: 2, rot: 90, showText: false }
-            ]
+            { "type": "text", "content": "L: {location}", "x": 10, "y": 180, "size":15, "rot": 90},
+            { "type": "text", "content": "{item}", "x": 35, "y": 130, "size":15, "rot": 90 },
+            { "type": "text", "content": "{weight}kg", "x": 10, "y": 50, "size":15, "rot": 90 },
+            { "type": "barcode", "content": "{item}", "x": 70, "y": 120, "height": 40, "width": 1.5, "rot": 90, "showText": false }]
         };
 
         // --- Bluetooth Scale Logic ---
@@ -413,6 +412,7 @@
             const [cameras, setCameras] = useState([]);
             const [selectedCamera, setSelectedCamera] = useState(null);
             const [manualForm] = Form.useForm();
+            const previewCanvasRef = useRef(null);
 
             useEffect(() => {
                 if (scannerVisible) {
@@ -763,8 +763,8 @@
 
             const delay = ms => new Promise(res => setTimeout(res, ms));
 
-            const renderCanvas = (loc, itm, wt) => {
-                const canvas = document.getElementById('labelCanvas');
+            const renderCanvas = (loc, itm, wt, targetCanvas = null) => {
+                const canvas = targetCanvas || document.getElementById('labelCanvas');
                 const ctx = canvas.getContext('2d');
                 ctx.fillStyle = 'white';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -805,6 +805,11 @@
                 });
                 return { canvas, ctx };
             };
+
+            useEffect(() => {
+                if (!settingsVisible || !previewCanvasRef.current || !Array.isArray(settings.template)) return;
+                renderCanvas('LOC-01', 'ITEM-123', (1.25).toFixed(settings.decimalPlaces ?? 3), previewCanvasRef.current);
+            }, [settings, settingsVisible]);
 
             const getRasterCommand = (canvas, ctx) => {
                 const width = canvas.width;
@@ -1259,9 +1264,9 @@
                         destroyOnClose
                         extra={
                             <Space>
-                                <Button className="hide-text-mobile" icon={<UploadOutlined />} onClick={handleLoadSettings}>Load</Button>
-                                <Button className="hide-text-mobile" icon={<DownloadOutlined />} onClick={handleDownloadSettings}>Download</Button>
-                                <Button className="hide-text-mobile" icon={<ShareAltOutlined />} onClick={handleShareSettings}>Share</Button>
+                                <Button className="hide-text-mobile" icon={<UploadOutlined />} onClick={handleLoadSettings}></Button>
+                                <Button className="hide-text-mobile" icon={<DownloadOutlined />} onClick={handleDownloadSettings}></Button>
+                                <Button className="hide-text-mobile" icon={<ShareAltOutlined />} onClick={handleShareSettings}></Button>
                             </Space>
                         }
                     >
@@ -1298,7 +1303,60 @@
                             <Form.Item label="Save Command Regex" name="saveCommandRegex">
                                 <Input placeholder="e.g. ^CMD-SAVE$" />
                             </Form.Item>
-                            <Form.Item label="JSON Template">
+                            <Form.Item
+                                label={
+                                    <Space size={4}>
+                                        <span>JSON Template</span>
+                                        <Button
+                                            type="text"
+                                            size="small"
+                                            icon={<InfoCircleOutlined />}
+                                            aria-label="Label configuration information"
+                                            onClick={() => Modal.info({
+                                                title: 'Label configuration',
+                                                width: 420,
+                                                content: (
+                                                    <div style={{ lineHeight: 1.45 }}>
+                                                        <p>Build the label from JSON elements: <code>text</code> and <code>barcode</code>.</p>
+                                                        <div style={{ display: 'flex', gap: 16, alignItems: 'center', margin: '16px 0' }}>
+                                                            <div style={{ width: 96, height: 160, border: '2px solid #1677ff', background: '#f0f7ff', position: 'relative', flexShrink: 0 }}>
+                                                                <span style={{ position: 'absolute', top: 4, left: 4, fontSize: 11 }}>0,0</span>
+                                                                <span style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', color: '#1677ff', fontSize: 12, whiteSpace: 'nowrap' }}>x: 48</span>
+                                                                <span style={{ position: 'absolute', bottom: 4, right: 4, fontSize: 11 }}>96,240</span>
+                                                            </div>
+                                                            <div>
+                                                                <div><code>x</code>: left to right, 0-96</div>
+                                                                <div><code>y</code>: top to bottom, 0-240</div>
+                                                                <div>Coordinates mark the element center.</div>
+                                                            </div>
+                                                        </div>
+                                                        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 12 }}>
+                                                            <tbody>
+                                                                <tr><td><code>rot</code></td><td>Clockwise rotation; <code>90</code> is the default portrait layout.</td></tr>
+                                                                <tr><td><code>size</code></td><td>Text font size in pixels.</td></tr>
+                                                                <tr><td><code>height</code> / <code>width</code></td><td>Barcode height and bar-module width in pixels.</td></tr>
+                                                                <tr><td><code>showText</code></td><td>Displays the value below the barcode.</td></tr>
+                                                            </tbody>
+                                                        </table>
+                                                        <p><strong>Values:</strong> <code>{'{location}'}</code> <code>{'{item}'}</code> <code>{'{weight}'}</code>. Weight follows Decimal Places.</p>
+                                                        <p><strong>Formats:</strong> <code>CODE128</code> (recommended), <code>CODE128A/B/C</code>, <code>EAN13/8/5/2</code>, <code>UPC</code>, <code>ITF14</code>, <code>ITF</code>, <code>MSI</code> variants, <code>pharmacode</code>, <code>codabar</code>.</p>
+                                                        <p style={{ marginBottom: 0 }}>Use numeric input for EAN, UPC, ITF14, and Pharmacode. Leave room around rotated or large elements to prevent clipping.</p>
+                                                    </div>
+                                                )
+                                            })}
+                                        />
+                                    </Space>
+                                }
+                            >
+                                <div style={{ marginBottom: 16, padding: 12, background: '#f5f5f5', borderRadius: 6, textAlign: 'center' }}>
+                                    <div style={{ color: '#666', fontSize: 12, marginBottom: 8 }}>Preview: LOC-01 / ITEM-123 / 1.250 kg</div>
+                                    <canvas
+                                        ref={previewCanvasRef}
+                                        width="96"
+                                        height="240"
+                                        style={{ display: 'block', width: 144, height: 360, margin: '0 auto', background: '#fff', border: '1px solid #d9d9d9' }}
+                                    />
+                                </div>
                                 <Input.TextArea
                                     rows={8}
                                     defaultValue={JSON.stringify(settings.template, null, 2)}
