@@ -964,6 +964,7 @@
                             weight: printWt
                         };
                         setPrintHistory(prev => [printEntry, ...prev]);
+                        handleSave({ saveAsNewOnCancel: false });
                     }
                     message.success({ content: 'Label printed!', key: 'print' });
 
@@ -973,7 +974,7 @@
                 }
             };
 
-            const handleSave = () => {
+            const handleSave = ({ saveAsNewOnCancel = true } = {}) => {
                 if (!location || !item || !isLocked || !Number.isFinite(Number(lockedWeight))) {
                     return message.error('Missing location, item, or locked weight.');
                 }
@@ -984,7 +985,7 @@
                         title: 'Item ID already exists',
                         content: `Do you want to update the existing entry for ${item} or save as new?`,
                         okText: 'Update Existing',
-                        cancelText: 'Save as New',
+                        cancelText: saveAsNewOnCancel ? 'Save as New' : 'Cancel',
                         onOk: () => {
                             // Find most recent and update it
                             const sorted = [...existingItems].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -1001,10 +1002,10 @@
                             resetFlow();
                         },
                         onCancel: () => {
-                            createNewRecord();
+                            if (saveAsNewOnCancel) createNewRecord();
                         }
                     });
-                } else if (Number.isFinite(Number(liveWeight))) {
+                } else {
                     createNewRecord();
                 }
             };
@@ -1031,8 +1032,6 @@
             };
 
             const resetFlow = () => {
-                setItem(null);
-                // Keep location typically
                 setIsLocked(false);
                 setLockedWeight(null);
             };
