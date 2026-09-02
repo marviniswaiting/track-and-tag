@@ -371,9 +371,16 @@
 
             const stop = useCallback((e) => {
                 setStartLongPress(false);
-                if (e && e.type !== 'mouseleave' && !triggeredRef.current && clickRef.current) {
-                    clickRef.current(e);
+            }, []);
+
+            const handleClick = useCallback((e) => {
+                if (triggeredRef.current) {
+                    triggeredRef.current = false;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
                 }
+                if (clickRef.current) clickRef.current(e);
             }, []);
 
             return {
@@ -382,6 +389,7 @@
                 onMouseLeave: stop,
                 onTouchStart: start,
                 onTouchEnd: stop,
+                onClick: handleClick,
             };
         };
 
