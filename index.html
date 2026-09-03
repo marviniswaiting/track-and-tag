@@ -436,10 +436,17 @@
             const scaleKeepAliveRef = useRef(null);
             const scaleReconnectRef = useRef(null);
             const scaleManualDisconnectRef = useRef(false);
+            const scaleReconnectAttemptsRef = useRef(0);
+            const scaleDisconnectHandlerRef = useRef(null);
+            const scaleDisconnectDeviceRef = useRef(null);
+            const scaleValueHandlerRef = useRef(null);
             const printerDeviceRef = useRef(null);
             const printerCharRef = useRef(null);
             const printerReconnectRef = useRef(null);
             const printerManualDisconnectRef = useRef(false);
+            const printerReconnectAttemptsRef = useRef(0);
+            const printerDisconnectHandlerRef = useRef(null);
+            const printerDisconnectDeviceRef = useRef(null);
 
             const [records, setRecords] = useState(() => {
                 const stored = readStoredJson('records', []);
@@ -660,9 +667,9 @@
             // --- Scale Integration ---
             const scheduleScaleReconnect = (device) => {
                 if (scaleManualDisconnectRef.current || scaleReconnectRef.current || !device) return;
-                const attempts = device.trackTagScaleReconnectAttempts || 0;
+                const attempts = scaleReconnectAttemptsRef.current;
                 if (attempts >= 5) return;
-                device.trackTagScaleReconnectAttempts = attempts + 1;
+                scaleReconnectAttemptsRef.current = attempts + 1;
                 scaleReconnectRef.current = setTimeout(() => {
                     scaleReconnectRef.current = null;
                     connectScale(device, true);
@@ -684,11 +691,18 @@
                     scaleManualDisconnectRef.current = false;
                     localStorage.setItem('trackTagScaleDeviceId', device.id);
 
-                    if (!device.trackTagScaleDisconnectHandler) {
-                        device.trackTagScaleDisconnectHandler = () => {
+                    if (scaleDisconnectDeviceRef.current !== device) {
+                        if (scaleDisconnectDeviceRef.current && scaleDisconnectHandlerRef.current) {
+                            scaleDisconnectDeviceRef.current.removeEventListener?.('gattserverdisconnected', scaleDisconnectHandlerRef.current);
+                        }
+                        scaleDisconnectHandlerRef.current = () => {
                             clearInterval(scaleKeepAliveRef.current);
                             scaleKeepAliveRef.current = null;
+                            if (scaleCharacteristicRef.current && scaleValueHandlerRef.current) {
+                                scaleCharacteristicRef.current.removeEventListener?.('characteristicvaluechanged', scaleValueHandlerRef.current);
+                            }
                             scaleCharacteristicRef.current = null;
+                            scaleValueHandlerRef.current = null;
                             setScaleConnected(false);
                             if (scaleDeviceRef.current === device) scaleDeviceRef.current = null;
                             if (!scaleManualDisconnectRef.current) scheduleScaleReconnect(device);
@@ -697,9 +711,10 @@
                         setBluetoothEventHandler(
                             device,
                             'gattserverdisconnected',
-                            device.trackTagScaleDisconnectHandler,
+                            scaleDisconnectHandlerRef.current,
                             'ongattserverdisconnected'
                         );
+                        scaleDisconnectDeviceRef.current = device;
                     }
 
                     const gatt = device.gatt;
@@ -708,7 +723,6 @@
                     const characteristic = await service.getCharacteristic(SCALE_CHAR);
 
                     await characteristic.startNotifications();
-                    scaleCharacteristicRef.current = characteristic;
                     clearInterval(scaleKeepAliveRef.current);
                     scaleKeepAliveRef.current = setInterval(async () => {
                         try {
@@ -732,14 +746,15 @@
 
                         setLiveWeight(w);
                     };
-                    if (characteristic.trackTagScaleValueHandler) {
-                        characteristic.removeEventListener('characteristicvaluechanged', characteristic.trackTagScaleValueHandler);
+                    if (scaleCharacteristicRef.current && scaleValueHandlerRef.current) {
+                        scaleCharacteristicRef.current.removeEventListener?.('characteristicvaluechanged', scaleValueHandlerRef.current);
                     }
-                    characteristic.trackTagScaleValueHandler = handleScaleValueChanged;
+                    scaleValueHandlerRef.current = handleScaleValueChanged;
                     characteristic.addEventListener('characteristicvaluechanged', handleScaleValueChanged);
+                    scaleCharacteristicRef.current = characteristic;
 
                     scaleDeviceRef.current = device;
-                    device.trackTagScaleReconnectAttempts = 0;
+                    scaleReconnectAttemptsRef.current = 0;
                     setScaleConnected(true);
                     if (!silent) message.success('Scale connected');
                 } catch (err) {
@@ -759,7 +774,11 @@
                 scaleReconnectRef.current = null;
                 clearInterval(scaleKeepAliveRef.current);
                 scaleKeepAliveRef.current = null;
+                if (scaleCharacteristicRef.current && scaleValueHandlerRef.current) {
+                    scaleCharacteristicRef.current.removeEventListener?.('characteristicvaluechanged', scaleValueHandlerRef.current);
+                }
                 scaleCharacteristicRef.current = null;
+                scaleValueHandlerRef.current = null;
                 if (scaleDeviceRef.current && scaleDeviceRef.current.gatt.connected) {
                     scaleDeviceRef.current.gatt.disconnect();
                 }
@@ -770,9 +789,9 @@
             // --- Printer Integration ---
             const schedulePrinterReconnect = (device) => {
                 if (printerManualDisconnectRef.current || printerReconnectRef.current || !device) return;
-                const attempts = device.trackTagPrinterReconnectAttempts || 0;
+                const attempts = printerReconnectAttemptsRef.current;
                 if (attempts >= 5) return;
-                device.trackTagPrinterReconnectAttempts = attempts + 1;
+                printerReconnectAttemptsRef.current = attempts + 1;
                 printerReconnectRef.current = setTimeout(() => {
                     printerReconnectRef.current = null;
                     connectPrinter(device, true);
@@ -781,16 +800,25 @@
 
             const connectPrinter = async (knownDevice = null, silent = false) => {
                 try {
+                    if (!navigator.bluetooth) {
+                        throw new Error('Web Bluetooth is unavailable. Open Track&Tag in Chrome or Edge from localhost or HTTPS.');
+                    }
                     const device = knownDevice || await navigator.bluetooth.requestDevice({
                         acceptAllDevices: true,
                         optionalServices: [PRINTER_SERVICE]
                     });
+                    if (!device?.gatt || typeof device.gatt.connect !== 'function') {
+                        throw new Error('The selected Bluetooth device does not provide a GATT connection.');
+                    }
 
                     printerManualDisconnectRef.current = false;
                     localStorage.setItem('trackTagPrinterDeviceId', device.id);
 
-                    if (!device.trackTagPrinterDisconnectHandler) {
-                        device.trackTagPrinterDisconnectHandler = () => {
+                    if (printerDisconnectDeviceRef.current !== device) {
+                        if (printerDisconnectDeviceRef.current && printerDisconnectHandlerRef.current) {
+                            printerDisconnectDeviceRef.current.removeEventListener?.('gattserverdisconnected', printerDisconnectHandlerRef.current);
+                        }
+                        printerDisconnectHandlerRef.current = () => {
                             setPrinterConnected(false);
                             printerCharRef.current = null;
                             if (printerDeviceRef.current === device) printerDeviceRef.current = null;
@@ -800,19 +828,20 @@
                         setBluetoothEventHandler(
                             device,
                             'gattserverdisconnected',
-                            device.trackTagPrinterDisconnectHandler,
+                            printerDisconnectHandlerRef.current,
                             'ongattserverdisconnected'
                         );
+                        printerDisconnectDeviceRef.current = device;
                     }
 
-                    if (device.gatt.connected) return;
-                    const server = await device.gatt.connect();
+                    const gatt = device.gatt;
+                    const server = gatt.connected ? gatt : await gatt.connect();
                     const service = await server.getPrimaryService(PRINTER_SERVICE);
                     const char = await service.getCharacteristic(PRINTER_CHAR);
 
                     printerDeviceRef.current = device;
                     printerCharRef.current = char;
-                    device.trackTagPrinterReconnectAttempts = 0;
+                    printerReconnectAttemptsRef.current = 0;
                     setPrinterConnected(true);
                     if (!silent) message.success('Printer connected');
                 } catch (err) {
