@@ -335,16 +335,11 @@
         const SCALE_SERVICE = 0x181d;
         const SCALE_CHAR = 0x2a9d;
 
-        const setBluetoothEventHandler = (target, eventName, handler, propertyName) => {
-            if (typeof target?.addEventListener === 'function') {
-                target.addEventListener(eventName, handler);
-                return;
+        const getBluetooth = () => {
+            if (!navigator.bluetooth) {
+                throw new Error('Web Bluetooth is unavailable. Use Chrome or Edge on Android and open the app over HTTPS.');
             }
-            if (target) {
-                target[propertyName] = handler;
-                return;
-            }
-            throw new Error(`Bluetooth object does not support ${eventName} events`);
+            return navigator.bluetooth;
         };
 
         // --- Bluetooth Printer Logic ---
@@ -433,20 +428,8 @@
 
             const scaleDeviceRef = useRef(null);
             const scaleCharacteristicRef = useRef(null);
-            const scaleKeepAliveRef = useRef(null);
-            const scaleReconnectRef = useRef(null);
-            const scaleManualDisconnectRef = useRef(false);
-            const scaleReconnectAttemptsRef = useRef(0);
-            const scaleDisconnectHandlerRef = useRef(null);
-            const scaleDisconnectDeviceRef = useRef(null);
-            const scaleValueHandlerRef = useRef(null);
             const printerDeviceRef = useRef(null);
             const printerCharRef = useRef(null);
-            const printerReconnectRef = useRef(null);
-            const printerManualDisconnectRef = useRef(false);
-            const printerReconnectAttemptsRef = useRef(0);
-            const printerDisconnectHandlerRef = useRef(null);
-            const printerDisconnectDeviceRef = useRef(null);
 
             const [records, setRecords] = useState(() => {
                 const stored = readStoredJson('records', []);
@@ -665,73 +648,23 @@
             }, [scannerVisible, selectedCamera]);
 
             // --- Scale Integration ---
-            const scheduleScaleReconnect = (device) => {
-                if (scaleManualDisconnectRef.current || scaleReconnectRef.current || !device) return;
-                const attempts = scaleReconnectAttemptsRef.current;
-                if (attempts >= 5) return;
-                scaleReconnectAttemptsRef.current = attempts + 1;
-                scaleReconnectRef.current = setTimeout(() => {
-                    scaleReconnectRef.current = null;
-                    connectScale(device, true);
-                }, Math.min(30000, 2000 * (attempts + 1)));
-            };
-
-            const connectScale = async (knownDevice = null, silent = false) => {
+            const connectScale = async () => {
                 try {
-                    if (!navigator.bluetooth) {
-                        throw new Error('Web Bluetooth is unavailable. Open Track&Tag in Chrome or Edge from localhost or HTTPS.');
-                    }
-                    const device = knownDevice || await navigator.bluetooth.requestDevice({
+                    const device = await getBluetooth().requestDevice({
                         filters: [{ services: [SCALE_SERVICE] }]
                     });
-                    if (!device?.gatt || typeof device.gatt.connect !== 'function') {
-                        throw new Error('The selected Bluetooth device does not provide a GATT connection.');
-                    }
+                    device.addEventListener('gattserverdisconnected', () => {
+                        setScaleConnected(false);
+                        scaleDeviceRef.current = null;
+                        message.warning('Scale disconnected');
+                    });
 
-                    scaleManualDisconnectRef.current = false;
-                    localStorage.setItem('trackTagScaleDeviceId', device.id);
-
-                    if (scaleDisconnectDeviceRef.current !== device) {
-                        if (scaleDisconnectDeviceRef.current && scaleDisconnectHandlerRef.current) {
-                            scaleDisconnectDeviceRef.current.removeEventListener?.('gattserverdisconnected', scaleDisconnectHandlerRef.current);
-                        }
-                        scaleDisconnectHandlerRef.current = () => {
-                            clearInterval(scaleKeepAliveRef.current);
-                            scaleKeepAliveRef.current = null;
-                            if (scaleCharacteristicRef.current && scaleValueHandlerRef.current) {
-                                scaleCharacteristicRef.current.removeEventListener?.('characteristicvaluechanged', scaleValueHandlerRef.current);
-                            }
-                            scaleCharacteristicRef.current = null;
-                            scaleValueHandlerRef.current = null;
-                            setScaleConnected(false);
-                            if (scaleDeviceRef.current === device) scaleDeviceRef.current = null;
-                            if (!scaleManualDisconnectRef.current) scheduleScaleReconnect(device);
-                            if (!scaleManualDisconnectRef.current) message.warning('Scale disconnected; reconnecting...');
-                        };
-                        setBluetoothEventHandler(
-                            device,
-                            'gattserverdisconnected',
-                            scaleDisconnectHandlerRef.current,
-                            'ongattserverdisconnected'
-                        );
-                        scaleDisconnectDeviceRef.current = device;
-                    }
-
-                    const gatt = device.gatt;
-                    const server = gatt.connected ? gatt : await gatt.connect();
+                    const server = await device.gatt.connect();
                     const service = await server.getPrimaryService(SCALE_SERVICE);
                     const characteristic = await service.getCharacteristic(SCALE_CHAR);
 
                     await characteristic.startNotifications();
-                    clearInterval(scaleKeepAliveRef.current);
-                    scaleKeepAliveRef.current = setInterval(async () => {
-                        try {
-                            await scaleCharacteristicRef.current?.readValue();
-                        } catch (err) {
-                            console.debug('Scale keep-alive unavailable', err);
-                        }
-                    }, 10000);
-                    const handleScaleValueChanged = (e) => {
+                    characteristic.addEventListener('characteristicvaluechanged', (e) => {
                         const value = e.target.value;
                         const flags = value.getUint8(0);
                         const unitIsLbs = (flags & 0x01) !== 0;
@@ -745,145 +678,56 @@
                         else w = rawWeight / 200;
 
                         setLiveWeight(w);
-                    };
-                    if (scaleCharacteristicRef.current && scaleValueHandlerRef.current) {
-                        scaleCharacteristicRef.current.removeEventListener?.('characteristicvaluechanged', scaleValueHandlerRef.current);
-                    }
-                    scaleValueHandlerRef.current = handleScaleValueChanged;
-                    characteristic.addEventListener('characteristicvaluechanged', handleScaleValueChanged);
+                    });
                     scaleCharacteristicRef.current = characteristic;
-
                     scaleDeviceRef.current = device;
-                    scaleReconnectAttemptsRef.current = 0;
                     setScaleConnected(true);
-                    if (!silent) message.success('Scale connected');
+                    message.success('Scale connected');
                 } catch (err) {
                     console.error(err);
-                    setScaleConnected(false);
-                    if (knownDevice && !scaleManualDisconnectRef.current) scheduleScaleReconnect(knownDevice);
-                    if (!silent) {
-                        const detail = err?.message || err?.name || 'Unknown Bluetooth error';
-                        message.error(`Scale connection failed: ${detail}`);
-                    }
+                    message.error(`Scale connection failed: ${err?.message || 'Unknown error'}`);
                 }
             };
 
             const disconnectScale = () => {
-                scaleManualDisconnectRef.current = true;
-                clearTimeout(scaleReconnectRef.current);
-                scaleReconnectRef.current = null;
-                clearInterval(scaleKeepAliveRef.current);
-                scaleKeepAliveRef.current = null;
-                if (scaleCharacteristicRef.current && scaleValueHandlerRef.current) {
-                    scaleCharacteristicRef.current.removeEventListener?.('characteristicvaluechanged', scaleValueHandlerRef.current);
-                }
-                scaleCharacteristicRef.current = null;
-                scaleValueHandlerRef.current = null;
                 if (scaleDeviceRef.current && scaleDeviceRef.current.gatt.connected) {
                     scaleDeviceRef.current.gatt.disconnect();
                 }
-                scaleDeviceRef.current = null;
-                setScaleConnected(false);
             };
 
             // --- Printer Integration ---
-            const schedulePrinterReconnect = (device) => {
-                if (printerManualDisconnectRef.current || printerReconnectRef.current || !device) return;
-                const attempts = printerReconnectAttemptsRef.current;
-                if (attempts >= 5) return;
-                printerReconnectAttemptsRef.current = attempts + 1;
-                printerReconnectRef.current = setTimeout(() => {
-                    printerReconnectRef.current = null;
-                    connectPrinter(device, true);
-                }, Math.min(30000, 2000 * (attempts + 1)));
-            };
-
-            const connectPrinter = async (knownDevice = null, silent = false) => {
+            const connectPrinter = async () => {
                 try {
-                    if (!navigator.bluetooth) {
-                        throw new Error('Web Bluetooth is unavailable. Open Track&Tag in Chrome or Edge from localhost or HTTPS.');
-                    }
-                    const device = knownDevice || await navigator.bluetooth.requestDevice({
+                    const device = await getBluetooth().requestDevice({
                         acceptAllDevices: true,
                         optionalServices: [PRINTER_SERVICE]
                     });
-                    if (!device?.gatt || typeof device.gatt.connect !== 'function') {
-                        throw new Error('The selected Bluetooth device does not provide a GATT connection.');
-                    }
+                    device.addEventListener('gattserverdisconnected', () => {
+                        setPrinterConnected(false);
+                        printerDeviceRef.current = null;
+                        printerCharRef.current = null;
+                        message.warning('Printer disconnected');
+                    });
 
-                    printerManualDisconnectRef.current = false;
-                    localStorage.setItem('trackTagPrinterDeviceId', device.id);
-
-                    if (printerDisconnectDeviceRef.current !== device) {
-                        if (printerDisconnectDeviceRef.current && printerDisconnectHandlerRef.current) {
-                            printerDisconnectDeviceRef.current.removeEventListener?.('gattserverdisconnected', printerDisconnectHandlerRef.current);
-                        }
-                        printerDisconnectHandlerRef.current = () => {
-                            setPrinterConnected(false);
-                            printerCharRef.current = null;
-                            if (printerDeviceRef.current === device) printerDeviceRef.current = null;
-                            if (!printerManualDisconnectRef.current) schedulePrinterReconnect(device);
-                            if (!printerManualDisconnectRef.current) message.warning('Printer disconnected; reconnecting...');
-                        };
-                        setBluetoothEventHandler(
-                            device,
-                            'gattserverdisconnected',
-                            printerDisconnectHandlerRef.current,
-                            'ongattserverdisconnected'
-                        );
-                        printerDisconnectDeviceRef.current = device;
-                    }
-
-                    const gatt = device.gatt;
-                    const server = gatt.connected ? gatt : await gatt.connect();
+                    const server = await device.gatt.connect();
                     const service = await server.getPrimaryService(PRINTER_SERVICE);
                     const char = await service.getCharacteristic(PRINTER_CHAR);
 
                     printerDeviceRef.current = device;
                     printerCharRef.current = char;
-                    printerReconnectAttemptsRef.current = 0;
                     setPrinterConnected(true);
-                    if (!silent) message.success('Printer connected');
+                    message.success('Printer connected');
                 } catch (err) {
                     console.error(err);
-                    setPrinterConnected(false);
-                    if (knownDevice && !printerManualDisconnectRef.current) schedulePrinterReconnect(knownDevice);
-                    if (!silent) message.error('Printer connection failed');
+                    message.error(`Printer connection failed: ${err?.message || 'Unknown error'}`);
                 }
             };
 
             const disconnectPrinter = () => {
-                printerManualDisconnectRef.current = true;
-                clearTimeout(printerReconnectRef.current);
-                printerReconnectRef.current = null;
                 if (printerDeviceRef.current && printerDeviceRef.current.gatt.connected) {
                     printerDeviceRef.current.gatt.disconnect();
                 }
-                printerDeviceRef.current = null;
-                printerCharRef.current = null;
-                setPrinterConnected(false);
             };
-
-            useEffect(() => {
-                let cancelled = false;
-                const reconnectRememberedDevices = async () => {
-                    if (!navigator.bluetooth?.getDevices) return;
-                    try {
-                        const devices = await navigator.bluetooth.getDevices();
-                        if (cancelled) return;
-                        const scaleId = localStorage.getItem('trackTagScaleDeviceId');
-                        const printerId = localStorage.getItem('trackTagPrinterDeviceId');
-                        const scale = devices.find(device => device.id === scaleId);
-                        const printer = devices.find(device => device.id === printerId);
-                        if (scale) connectScale(scale, true);
-                        if (printer) connectPrinter(printer, true);
-                    } catch (err) {
-                        console.debug('Bluetooth auto-connect unavailable', err);
-                    }
-                };
-                reconnectRememberedDevices();
-                return () => { cancelled = true; };
-            }, []);
 
             const delay = ms => new Promise(res => setTimeout(res, ms));
 
