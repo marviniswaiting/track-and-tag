@@ -428,8 +428,10 @@
 
             const scaleDeviceRef = useRef(null);
             const scaleCharacteristicRef = useRef(null);
+            const scaleKeepAliveRef = useRef(null);
             const printerDeviceRef = useRef(null);
             const printerCharRef = useRef(null);
+            const printerKeepAliveRef = useRef(null);
 
             const [records, setRecords] = useState(() => {
                 const stored = readStoredJson('records', []);
@@ -654,6 +656,8 @@
                         filters: [{ services: [SCALE_SERVICE] }]
                     });
                     device.addEventListener('gattserverdisconnected', () => {
+                        clearInterval(scaleKeepAliveRef.current);
+                        scaleKeepAliveRef.current = null;
                         setScaleConnected(false);
                         scaleDeviceRef.current = null;
                         message.warning('Scale disconnected');
@@ -681,6 +685,14 @@
                     });
                     scaleCharacteristicRef.current = characteristic;
                     scaleDeviceRef.current = device;
+                    clearInterval(scaleKeepAliveRef.current);
+                    scaleKeepAliveRef.current = setInterval(async () => {
+                        try {
+                            await scaleCharacteristicRef.current?.readValue();
+                        } catch (err) {
+                            console.debug('Scale keep-alive unavailable', err);
+                        }
+                    }, 10000);
                     setScaleConnected(true);
                     message.success('Scale connected');
                 } catch (err) {
@@ -690,6 +702,8 @@
             };
 
             const disconnectScale = () => {
+                clearInterval(scaleKeepAliveRef.current);
+                scaleKeepAliveRef.current = null;
                 if (scaleDeviceRef.current && scaleDeviceRef.current.gatt.connected) {
                     scaleDeviceRef.current.gatt.disconnect();
                 }
@@ -703,6 +717,8 @@
                         optionalServices: [PRINTER_SERVICE]
                     });
                     device.addEventListener('gattserverdisconnected', () => {
+                        clearInterval(printerKeepAliveRef.current);
+                        printerKeepAliveRef.current = null;
                         setPrinterConnected(false);
                         printerDeviceRef.current = null;
                         printerCharRef.current = null;
@@ -715,6 +731,14 @@
 
                     printerDeviceRef.current = device;
                     printerCharRef.current = char;
+                    clearInterval(printerKeepAliveRef.current);
+                    printerKeepAliveRef.current = char.properties?.read ? setInterval(async () => {
+                        try {
+                            if (printerDeviceRef.current?.gatt.connected) await printerCharRef.current?.readValue();
+                        } catch (err) {
+                            console.debug('Printer keep-alive unavailable', err);
+                        }
+                    }, 10000) : null;
                     setPrinterConnected(true);
                     message.success('Printer connected');
                 } catch (err) {
@@ -724,6 +748,8 @@
             };
 
             const disconnectPrinter = () => {
+                clearInterval(printerKeepAliveRef.current);
+                printerKeepAliveRef.current = null;
                 if (printerDeviceRef.current && printerDeviceRef.current.gatt.connected) {
                     printerDeviceRef.current.gatt.disconnect();
                 }
