@@ -92,13 +92,13 @@ test('navigation and reset cannot race an in-flight print', async ({ page }) => 
     Object.defineProperty(navigator, 'bluetooth', { configurable: true, value: { requestDevice: async () => Object.assign(new EventTarget(), { gatt }) } });
   });
   await page.reload();
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent('pwa-update', { detail: async () => undefined })));
-  await expect(page.getByRole('button', { name: 'reload' })).toBeEnabled();
   await page.getByRole('button', { name: 'Manual entry' }).click();
   await page.getByLabel('Location').fill('LOC-PRINT');
   await page.getByLabel('Item ID').fill('ITEM-PRINT');
   await page.getByLabel('Weight (kg)').fill('1');
   await page.getByRole('button', { name: 'Apply & lock' }).click();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('pwa-update', { detail: async () => undefined })));
+  await expect(page.getByRole('button', { name: 'reload' })).toBeEnabled();
   await page.getByRole('button', { name: 'Print label' }).click();
   await expect(page.getByRole('button', { name: 'Settings' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'History' })).toBeDisabled();
